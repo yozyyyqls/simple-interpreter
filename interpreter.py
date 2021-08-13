@@ -48,7 +48,6 @@ class Lexer(object):
         self.pos = 0
         self.current_char = self.text[self.pos]
 
-
     def _id(self):
         '''If it's not a reserved keyword, it returns a new ID token whose value is the character string.'''
         result = ''
@@ -58,10 +57,8 @@ class Lexer(object):
         token = self.RESERVED_KEYWORDS.get(result, Token(ID, result))
         return token
 
-
     def error(self):
         raise Exception('Invalid character')
-
 
     def get_next_token(self):
         while(self.current_char is not None):
@@ -115,12 +112,10 @@ class Lexer(object):
             self.error()
 
         return Token(EOF, None)
-            
-
+         
     def skip_whitespace(self):
         while self.current_char is not None and self.current_char.isspace():
             self.advance()
-
 
     def integer(self):
         """Return a (multidigit) integer consumed from the input."""
@@ -130,7 +125,6 @@ class Lexer(object):
             self.advance()
         return int(result)
 
-
     def advance(self):
         self.pos += 1
         if self.pos > len(self.text) - 1:
@@ -138,7 +132,6 @@ class Lexer(object):
         else:
             self.current_char = self.text[self.pos]
     
-
     def peek(self):
         """peek into the input buffer without consuming the next character."""
         peek_pos = self.pos + 1
@@ -157,20 +150,44 @@ class AST(object):
     pass
 
 class BinOp(AST):
+    """Binary operator node"""
     def __init__(self, left, op, right):
         self.left = left
         self.right = right
         self.token = self.op = op
 
 class Num(AST):
+    """Number node"""
     def __init__(self, token):
         self.token = token
         self.value = token.value
 
 class UnaryOp(AST):
+    """Unary operator node"""
     def __init__(self, op, right):
         self.op = op
         self.right = right
+
+class Compound(AST):
+    """Represents a 'BEGIN ... END' block"""
+    def __init__(self):
+        self.children = []
+
+class Assign(AST):
+    def __init__(self, left, assign_token, right):
+        self.left = left
+        self.assign_token = assign_token
+        self.right = right
+
+class Var(AST):
+    def __init__(self, var_token):
+        self.var_token = var_token
+        self.value = var_token.value
+
+class NoOp(AST):
+    def __init__(self):
+        pass
+
 
 # 语法分析器
 class Parser(object):
@@ -191,7 +208,6 @@ class Parser(object):
         else:
             self.error()
 
-
     def expr(self):
         """expr   : term ((PLUS | MINUS) term)*"""
         node = self.term()
@@ -206,7 +222,6 @@ class Parser(object):
 
         return node
 
-
     def term(self):
         """term : factor ((MUL | DIV) factor)*"""
         node = self.factor()
@@ -220,7 +235,6 @@ class Parser(object):
             node = BinOp(left=node, op=op_token, right=self.factor())
 
         return node
-
 
     def factor(self):
         """factor : INTEGER | LPAREN expr RPAREN | (MUL | DIV) factor"""
@@ -242,12 +256,81 @@ class Parser(object):
                 self.eat(MINUS)
                 node = self.factor()
                 return UnaryOp(op=token, right=node)
+        elif token.type == ID:
+            return self.variable()
         self.error()
 
+    def program(self):
+        node = self.compound_statement()
+        self.eat(DOT)
+        return node
+
+    def compound_statement(self):
+        """
+        compound_statement: BEGIN statement_list END
+        """
+        self.eat(BEGIN)
+        nodes = self.statement_list()
+        self.eat(END)
+
+        root = Compound()
+        for node in nodes:
+            root.children.append(node)
+        return root
+
+    def statement_list(self):
+        """
+        statement_list : statement
+                    | statement SEMI statement_list
+        """
+        node = self.statement()
+        result = [node]
+        while self.current_token.type == SEMI:
+            self.eat(SEMI)
+            result.append(self.statement())
+
+        if self.current_token.type == ID:
+            self.error()
+
+        return result
+
+    def statement(self):
+        if self.current_token.type == BEGIN:
+            node = self.compound_statement()
+        elif self.current_token.type == ID:
+            node = self.assignment_statement()
+        else:
+            node = self.empty()
+        return node
+
+    def assignment_statement(self):
+        """
+        assignment_statement : variable ASSIGN expr
+        """
+        left = self.variable()
+        token = self.current_token
+        self.eat(ASSIGN)
+        right = self.expr()
+        return Assign(left=left, assign_token=token, right=right)
+
+    def variable(self):
+        """
+        variable : ID
+        """
+        token = self.current_token
+        self.eat(ID)
+        return Var(token)
+
+    def empty(self):
+        """An empty production"""
+        return NoOp()
 
     def parse(self):
-        return self.expr()
+        node = self.program()
+        if self.current_token.type != EOF:
+            self.error()
 
+        return node
 
 #############################################################
 #                                                           #
@@ -265,6 +348,8 @@ class NodeVisitor(object):
 
 
 class Interpreter(NodeVisitor):
+    GLOBAL_SCOPE = {}
+
     def __init__(self, parser):
         self.parser = parser
 
@@ -290,25 +375,38 @@ class Interpreter(NodeVisitor):
             return self.visit(node.right)
         elif node.op.type == MINUS:
             return 0 - self.visit(node.right)
-        
+    
+    def visit_Compound(self, nodes):
+        for node in nodes.children:
+            self.visit(node)
+
+    def visit_Assign(self, node):
+        left = node.left
+        right = node.right
+        self.GLOBAL_SCOPE[left.value] = self.visit(right)
+
+    def visit_Var(self, node):
+        var_name = node.value
+        var_value = self.GLOBAL_SCOPE.get(var_name)
+        if var_value is None:
+            raise NameError(repr(var_name))
+        else:
+            return var_value
+
+    def visit_NoOp(self, node):
+        pass
+
 
 def main():
-    while True:
-        try:
-            try:
-                text = input('spi> ')
-            except NameError:  # Python3
-                text = input('spi> ')
-        except EOFError:
-            break
-        if not text:
-            continue
-
+    url = input('simple> ')
+    url = '/Users/lishanqiu/vscode-projects/vscode-python/simple-interpreter/test.pas'
+    with open(url, 'r', encoding='utf-8') as f:
+        text = f.read()
         lexer = Lexer(text)
         parser = Parser(lexer)
         interpreter = Interpreter(parser)
-        result = interpreter.interpret()
-        print(result)
+        interpreter.interpret()
+        print(interpreter.GLOBAL_SCOPE)
 
 
 
