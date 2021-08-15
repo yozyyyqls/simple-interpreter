@@ -5,26 +5,27 @@
 #############################################################
 
 # 标识符类型
-INTEGER = 'INTEGER'
-EOF = 'EOF'
+INTEGER_CONST = 'INTEGER_CONST'
+INTEGER, REAL = 'INTEGER', 'REAL'
+PROGRAM, VAR, EOF = 'PROGRAM', 'VAR', 'EOF'
 PLUS, MINUS, MUL, DIV = '+', '-', '*', '/'
 LPAREN, RPAREN = '(', ')'
-BEGIN, END, DOT, ID = 'BEGIN', "END", '.', 'ID'
+BEGIN, END, DOT, COMMA, COLON, SEMI ,ID = 'BEGIN', "END", '.', ',', ':', ';', 'ID'
 ASSIGN = ':='
-SEMI = ';'
+
 
 # 标识符
 class Token(object):
     def __init__(self, type, value):
-        # token type: INTEGER, MUL, DIV, or EOF
+        # token type: INTEGER_CONST, MUL, DIV, or EOF
         self.type = type
-        # token value: non-negative integer value, '*', '/', or None
+        # token value: non-negative INTEGER_CONST value, '*', '/', or None
         self.value = value
 
     def __str__(self):
         """String representation of the class instance.
         Examples:
-            Token(INTEGER, 3)
+            Token(INTEGER_CONST, 3)
             Token(MUL, '*')
         """
         return 'Token({type}, {value})'.format(
@@ -41,6 +42,10 @@ class Lexer(object):
     RESERVED_KEYWORDS = {
         'BEGIN': Token('BEGIN', 'BEGIN'),
         'END': Token('END', 'END'),
+        'PROGRAM': Token('PROGRAM', 'PROGRAM'),
+        'VAR': Token('VAR', 'VAR'),
+        'INTEGER': Token('INTEGER', 'INTEGER'),
+        'REAL': Token('REAL', 'REAL'),
     }
 
     def __init__(self, text):
@@ -67,7 +72,7 @@ class Lexer(object):
                 continue
 
             if self.current_char.isdigit():
-                return Token(INTEGER, self.integer())
+                return Token(INTEGER_CONST, self.integer_const())
 
             if self.current_char == '*':
                 self.advance()
@@ -101,6 +106,10 @@ class Lexer(object):
                 self.advance()
                 return Token(ASSIGN, ':=')
 
+            if self.current_char == ':':
+                self.advance()
+                return Token(COLON, ':')
+
             if self.current_char == ';':
                 self.advance()
                 return Token(SEMI, ';')
@@ -108,6 +117,10 @@ class Lexer(object):
             if self.current_char == '.':
                 self.advance()
                 return Token(DOT, '.')
+
+            if self.current_char == ',':
+                self.advance()
+                return Token(COMMA, ',')
 
             self.error()
 
@@ -117,8 +130,8 @@ class Lexer(object):
         while self.current_char is not None and self.current_char.isspace():
             self.advance()
 
-    def integer(self):
-        """Return a (multidigit) integer consumed from the input."""
+    def integer_const(self):
+        """Return a (multidigit) INTEGER_CONST consumed from the input."""
         result = ''
         while self.current_char is not None and self.current_char.isdigit():
             result += self.current_char
@@ -188,6 +201,25 @@ class NoOp(AST):
     def __init__(self):
         pass
 
+class Program(AST):
+    def __init__(self, name, block_node):
+        self.name = name
+        self.block_node = block_node
+
+class Block(AST):
+    def __init__(self, declarations, compound_statement):
+        self.declarations = declarations
+        self.compound_statement = compound_statement
+
+class VarDecl(AST):
+    def __init__(self, var_node, type_node):
+        self.var_node = var_node
+        self.type_node = type_node
+
+class Type(AST):
+    def __init__(self, token):
+        self.token = token
+        self.value = token.value
 
 # 语法分析器
 class Parser(object):
@@ -237,10 +269,10 @@ class Parser(object):
         return node
 
     def factor(self):
-        """factor : INTEGER | LPAREN expr RPAREN | (MUL | DIV) factor"""
+        """factor : INTEGER_CONST | LPAREN expr RPAREN | (MUL | DIV) factor"""
         token = self.current_token
-        if token.type == INTEGER:
-            self.eat(INTEGER)
+        if token.type == INTEGER_CONST:
+            self.eat(INTEGER_CONST)
             return Num(token)
         elif token.type == LPAREN:
             self.eat(LPAREN)
@@ -325,6 +357,49 @@ class Parser(object):
         """An empty production"""
         return NoOp()
 
+    def program(self):
+        self.eat(PROGRAM)
+        var_node = self.variable()
+        self.eat(SEMI)
+        node = self.block()
+        self.eat(DOT)
+        return Program(name=var_node.value, block_node=node)
+
+    def block(self):
+        decl_node = self.declarations()
+        compound_statement_node = self.compound_statement()
+        return Block(declarations=decl_node, compound_statement=compound_statement_node)
+
+    def declarations(self):
+        declarations = []
+        if self.current_token.type == VAR:
+            self.eat(VAR)
+            while self.current_token.type == ID:
+                declarations.extend(self.variable_declaration())
+                self.eat(SEMI)
+            return declarations
+
+    def variable_declaration(self):
+        var_nodes = [self.variable()]
+        while self.current_token.type == COMMA:
+            self.eat(COMMA)
+            var_nodes.append(self.variable())
+        self.eat(COLON)
+        type_node = self.type_spec()
+        var_declarations = [
+            VarDecl(var_node=var_node, type_node=type_node)
+            for var_node in var_nodes
+        ]
+        return var_declarations
+
+    def type_spec(self):
+        token = self.current_token
+        if token.type == INTEGER:
+            self.eat(INTEGER)
+        else:
+            self.eat(REAL)
+        return Type(token=token)
+
     def parse(self):
         node = self.program()
         if self.current_token.type != EOF:
@@ -394,6 +469,20 @@ class Interpreter(NodeVisitor):
             return var_value
 
     def visit_NoOp(self, node):
+        pass
+
+    def visit_Program(self, node):
+        self.visit(node.block)
+
+    def visit_Block(self, node):
+        for var_decl_node in node.declarations:
+            self.visit(var_decl_node)
+        self.visit(node.compound_statement)
+
+    def visit_VarDecl(self, node):
+        pass
+
+    def visit_Type(self, node):
         pass
 
 
