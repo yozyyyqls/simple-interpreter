@@ -5,13 +5,28 @@
 #############################################################
 
 # 标识符类型
+REAL_CONST = 'REAL_CONST'
 INTEGER_CONST = 'INTEGER_CONST'
-INTEGER, REAL = 'INTEGER', 'REAL'
-PROGRAM, VAR, EOF = 'PROGRAM', 'VAR', 'EOF'
-PLUS, MINUS, MUL, DIV = '+', '-', '*', '/'
-LPAREN, RPAREN = '(', ')'
-BEGIN, END, DOT, COMMA, COLON, SEMI ,ID = 'BEGIN', "END", '.', ',', ':', ';', 'ID'
-ASSIGN = ':='
+INTEGER = 'INTEGER'
+REAL = 'REAL'
+PROGRAM = 'PROGRAM'
+VAR = 'VAR'
+EOF = 'EOF'
+PLUS = 'PLUS'
+MINUS = 'MINUS'
+MUL = 'MUL'
+INTEGER_DIV = 'INTEGER_DIV'
+FLOAT_DIV = 'FLOAT_DIV'
+LPAREN = 'LPAREN'
+RPAREN = 'RPAREN'
+BEGIN = 'BEGIN'
+END = 'END'
+DOT = 'DOT'
+COMMA = 'COMMA'
+COLON = 'COLON'
+SEMI = 'SEMI'
+ID = 'ID'
+ASSIGN = 'ASSIGN'
 
 
 # 标识符
@@ -46,6 +61,7 @@ class Lexer(object):
         'VAR': Token('VAR', 'VAR'),
         'INTEGER': Token('INTEGER', 'INTEGER'),
         'REAL': Token('REAL', 'REAL'),
+        'DIV' : Token('INTEGER_DIV', 'DIV'),
     }
 
     def __init__(self, text):
@@ -67,12 +83,17 @@ class Lexer(object):
 
     def get_next_token(self):
         while(self.current_char is not None):
+            if self.current_char == '{':
+                self.advance()
+                self.skip_comment()
+                continue
+
             if self.current_char.isspace():
                 self.skip_whitespace()
                 continue
 
             if self.current_char.isdigit():
-                return Token(INTEGER_CONST, self.integer_const())
+                return self.number()
 
             if self.current_char == '*':
                 self.advance()
@@ -80,7 +101,11 @@ class Lexer(object):
 
             if self.current_char == '/':
                 self.advance()
-                return Token(DIV, '/')
+                return Token(FLOAT_DIV, '/')
+
+            if self.current_char == 'DIV':
+                self.advance()
+                return Token(INTEGER_DIV, 'DIV')
             
             if self.current_char == '+':
                 self.advance()
@@ -130,13 +155,26 @@ class Lexer(object):
         while self.current_char is not None and self.current_char.isspace():
             self.advance()
 
-    def integer_const(self):
-        """Return a (multidigit) INTEGER_CONST consumed from the input."""
+    def skip_comment(self):
+        while self.current_char != '}':
+            self.advance()
+        self.advance()
+
+    def number(self):
+        """Return a (multidigit) INTEGER_CONST or REAL_CONST consumed from the input."""
         result = ''
         while self.current_char is not None and self.current_char.isdigit():
             result += self.current_char
             self.advance()
-        return int(result)
+        if self.current_char == '.':
+            result += '.'
+            self.advance()
+            while self.current_char is not None and self.current_char.isdigit():
+                result += self.current_char
+                self.advance()
+            return Token(REAL_CONST, float(result))
+        else:
+            return Token(INTEGER_CONST, int(result))
 
     def advance(self):
         self.pos += 1
@@ -204,7 +242,7 @@ class NoOp(AST):
 class Program(AST):
     def __init__(self, name, block_node):
         self.name = name
-        self.block_node = block_node
+        self.block = block_node
 
 class Block(AST):
     def __init__(self, declarations, compound_statement):
@@ -255,26 +293,25 @@ class Parser(object):
         return node
 
     def term(self):
-        """term : factor ((MUL | DIV) factor)*"""
+        """term : factor ((MUL | INTEGER_DIV | FLOAT_DIV) factor)*"""
         node = self.factor()
 
-        while self.current_token.type in (MUL, DIV):
+        while self.current_token.type in (MUL, INTEGER_DIV, FLOAT_DIV):
             op_token = self.current_token
             if op_token.type == MUL:
                 self.eat(MUL)
-            elif op_token.type == DIV:
-                self.eat(DIV)
+            elif op_token.type == INTEGER_DIV:
+                self.eat(INTEGER_DIV)
+            elif op_token.type == FLOAT_DIV:
+                self.eat(FLOAT_DIV)
             node = BinOp(left=node, op=op_token, right=self.factor())
 
         return node
 
     def factor(self):
-        """factor : INTEGER_CONST | LPAREN expr RPAREN | (MUL | DIV) factor"""
+        """factor : INTEGER_CONST | LPAREN expr RPAREN | (PLUS | MINUS) factor | variable"""
         token = self.current_token
-        if token.type == INTEGER_CONST:
-            self.eat(INTEGER_CONST)
-            return Num(token)
-        elif token.type == LPAREN:
+        if token.type == LPAREN:
             self.eat(LPAREN)
             node = self.expr()
             self.eat(RPAREN)
@@ -288,6 +325,12 @@ class Parser(object):
                 self.eat(MINUS)
                 node = self.factor()
                 return UnaryOp(op=token, right=node)
+        elif token.type == INTEGER_CONST:
+            self.eat(INTEGER_CONST)
+            return Num(token)
+        elif token.type == REAL_CONST:
+            self.eat(REAL_CONST)
+            return Num(token)
         elif token.type == ID:
             return self.variable()
         self.error()
@@ -439,8 +482,10 @@ class Interpreter(NodeVisitor):
             return self.visit(node.left) - self.visit(node.right)
         elif node.op.type == MUL:
             return self.visit(node.left) * self.visit(node.right)
-        elif node.op.type == DIV:
-            return self.visit(node.left) / self.visit(node.right)
+        elif node.op.type == INTEGER_DIV:
+            return self.visit(node.left) // self.visit(node.right)
+        elif node.op.type == FLOAT_DIV:
+            return float(self.visit(node.left) / self.visit(node.right))
 
     def visit_Num(self, node):
         return node.value
@@ -487,7 +532,7 @@ class Interpreter(NodeVisitor):
 
 
 def main():
-    url = input('simple> ')
+    # url = input('simple> ')
     url = '/Users/lishanqiu/vscode-projects/vscode-python/simple-interpreter/test.pas'
     with open(url, 'r', encoding='utf-8') as f:
         text = f.read()
