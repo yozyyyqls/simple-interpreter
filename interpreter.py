@@ -29,6 +29,49 @@ ID = 'ID'
 ASSIGN = 'ASSIGN'
 
 
+# Symbol
+class Symbol(object):
+    def __init__(self, name, type=None):
+        self.name = name
+        self.type = type
+    
+class BuildinTypeSymbol(Symbol):
+    def __init__(self, name):
+        super().__init__(name)
+
+    def __str__(self) -> str:
+        return self.name
+
+    __repr__ = __str__
+
+class VarSymbol(Symbol):
+    def __init__(self, name:str, type:BuildinTypeSymbol):
+        super().__init__(name, type=type)
+
+    def __str__(self) -> str:
+        return '<{name}>:<{type}>'.format(name=self.name, type=self.type)
+
+    __repr__ = __str__
+
+# Symbol Table
+class SymbolTable(object):
+    def __init__(self) -> None:
+        self._symbols = {}
+        self._init_buildins()
+
+    def _init_buildins(self) -> None:
+        """Initialize build-in symbols"""
+        self.define(BuildinTypeSymbol(INTEGER))
+        self.define(BuildinTypeSymbol(REAL))
+
+    def define(self, symbol) -> None:
+        print('Define: %s' % symbol)
+        self._symbols[symbol.name] = symbol
+
+    def lookup(self, name) -> Symbol:
+        print('Lookup: %s' % name)
+        return self._symbols.get(name)
+
 # 标识符
 class Token(object):
     def __init__(self, type, value):
@@ -50,7 +93,6 @@ class Token(object):
 
     def __repr__(self):
         return self.__str__()
-
 
 # 词法分析器
 class Lexer(object):
@@ -249,15 +291,16 @@ class Block(AST):
         self.declarations = declarations
         self.compound_statement = compound_statement
 
-class VarDecl(AST):
-    def __init__(self, var_node, type_node):
-        self.var_node = var_node
-        self.type_node = type_node
-
 class Type(AST):
     def __init__(self, token):
         self.token = token
         self.value = token.value
+
+class VarDecl(AST):
+    def __init__(self, var_node:Var, type_node:Type):
+        self.var_node = var_node
+        self.type_node = type_node
+
 
 # 语法分析器
 class Parser(object):
@@ -422,7 +465,7 @@ class Parser(object):
                 self.eat(SEMI)
             return declarations
 
-    def variable_declaration(self):
+    def variable_declaration(self) -> list:
         var_nodes = [self.variable()]
         while self.current_token.type == COMMA:
             self.eat(COMMA)
@@ -435,7 +478,7 @@ class Parser(object):
         ]
         return var_declarations
 
-    def type_spec(self):
+    def type_spec(self) -> Type:
         token = self.current_token
         if token.type == INTEGER:
             self.eat(INTEGER)
@@ -470,6 +513,7 @@ class Interpreter(NodeVisitor):
 
     def __init__(self, parser):
         self.parser = parser
+        self.symtab = SymbolTable()
 
     def interpret(self):
         tree = self.parser.parse()
@@ -502,16 +546,25 @@ class Interpreter(NodeVisitor):
 
     def visit_Assign(self, node):
         left = node.left
-        right = node.right
-        self.GLOBAL_SCOPE[left.value] = self.visit(right)
+        left_var_symbol = self.symtab.lookup(left.value)
+        if left_var_symbol is None:
+            raise NameError(repr(left.value))
+        else:
+            right = node.right
+            self.GLOBAL_SCOPE[left.value] = self.visit(right)
 
     def visit_Var(self, node):
         var_name = node.value
-        var_value = self.GLOBAL_SCOPE.get(var_name)
-        if var_value is None:
+        # verify variable wether is declared before
+        var_symbol = self.symtab.lookup(var_name)
+        if var_symbol is None:
             raise NameError(repr(var_name))
         else:
-            return var_value
+            var_value = self.GLOBAL_SCOPE.get(var_name)
+            if var_value is None:
+                raise NameError(repr(var_name))
+            else:
+                return var_value
 
     def visit_NoOp(self, node):
         pass
@@ -519,13 +572,17 @@ class Interpreter(NodeVisitor):
     def visit_Program(self, node):
         self.visit(node.block)
 
-    def visit_Block(self, node):
+    def visit_Block(self, node:Block):
         for var_decl_node in node.declarations:
             self.visit(var_decl_node)
         self.visit(node.compound_statement)
 
-    def visit_VarDecl(self, node):
-        pass
+    def visit_VarDecl(self, node:VarDecl):
+        """Put the variable into symbol table."""
+        var_name = node.var_node.value
+        var_type_symbol = self.symtab.lookup(node.type_node.value)
+        var_symbol = VarSymbol(var_name, var_type_symbol)
+        self.symtab.define(var_symbol)
 
     def visit_Type(self, node):
         pass
@@ -541,7 +598,6 @@ def main():
         interpreter = Interpreter(parser)
         interpreter.interpret()
         print(interpreter.GLOBAL_SCOPE)
-
 
 
 if __name__ == '__main__':
