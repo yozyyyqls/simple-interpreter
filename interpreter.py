@@ -10,6 +10,7 @@ INTEGER_CONST = 'INTEGER_CONST'
 INTEGER = 'INTEGER'
 REAL = 'REAL'
 PROGRAM = 'PROGRAM'
+PROCEDURE = 'PROCEDURE'
 VAR = 'VAR'
 EOF = 'EOF'
 PLUS = 'PLUS'
@@ -104,6 +105,7 @@ class Lexer(object):
         'INTEGER': Token('INTEGER', 'INTEGER'),
         'REAL': Token('REAL', 'REAL'),
         'DIV' : Token('INTEGER_DIV', 'DIV'),
+        'PROCEDURE' : Token('PROCEDURE', 'PROCEDURE')
     }
 
     def __init__(self, text):
@@ -301,6 +303,11 @@ class VarDecl(AST):
         self.var_node = var_node
         self.type_node = type_node
 
+class ProcedureDecl(AST):
+    def __init__(self, proc_name:str, block_node:Block) -> None:
+        self.proc_name = proc_name
+        self.block_node = block_node
+
 
 # 语法分析器
 class Parser(object):
@@ -463,7 +470,15 @@ class Parser(object):
             while self.current_token.type == ID:
                 declarations.extend(self.variable_declaration())
                 self.eat(SEMI)
-            return declarations
+        while self.current_token.type == PROCEDURE:
+            self.eat(PROCEDURE)
+            proc_name = self.current_token.value
+            self.eat(ID)
+            self.eat(SEMI)
+            block_node = self.block()
+            declarations.append(ProcedureDecl(proc_name, block_node))
+            self.eat(SEMI)
+        return declarations
 
     def variable_declaration(self) -> list:
         var_nodes = [self.variable()]
@@ -553,7 +568,7 @@ class Interpreter(NodeVisitor):
             right = node.right
             self.GLOBAL_SCOPE[left.value] = self.visit(right)
 
-    def visit_Var(self, node):
+    def visit_Var(self, node:Var):
         var_name = node.value
         # verify variable wether is declared before
         var_symbol = self.symtab.lookup(var_name)
@@ -569,7 +584,7 @@ class Interpreter(NodeVisitor):
     def visit_NoOp(self, node):
         pass
 
-    def visit_Program(self, node):
+    def visit_Program(self, node:Program):
         self.visit(node.block)
 
     def visit_Block(self, node:Block):
@@ -585,6 +600,9 @@ class Interpreter(NodeVisitor):
         self.symtab.define(var_symbol)
 
     def visit_Type(self, node):
+        pass
+
+    def visit_ProcedureDecl(self, node:ProcedureDecl):
         pass
 
 
